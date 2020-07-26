@@ -158,7 +158,6 @@ turned it off by default starting from 1.5.0. You may enable it by
 </div>
 
 <div data-lang="python"  markdown="1">
-
 {% include_example schema_merging python/sql/datasource.py %}
 </div>
 
@@ -166,6 +165,70 @@ turned it off by default starting from 1.5.0. You may enable it by
 
 {% include_example schema_merging r/RSparkSQLExample.R %}
 
+</div>
+
+</div>
+
+### Conversion Mode
+
+When spark reads a parquet file, it converts the original data type in the parquet file to the internal data type of spark. The conversion relationship is as follows:
+
+| PrimitiveTypeName    | OriginalType     | Boolean | Float | Double | Byte int8 | Short int16 | Integer int32 | Date int32 | Decimal long or bigDecimal | Long int64 | Timestamp int64 | String byteArray | Binary byteArray |
+| -------------------- | ---------------- | ------- | ----- | ------ | --------- | ----------- | ------------- | ---------- | -------------------------- | ---------- | --------------- | ---------------- | ---------------- |
+| BOOLEAN              | /                | 1       |       |        |           |             |               |            |                            |            |                 | 2                |                  |
+| FLOAT                | /                |         | 1     | 2      | 3         | 3           | 3             |            | 3                          | 3          |                 | 2                |                  |
+| DOUBLE               | /                |         | 3     | 1      | 3         | 3           | 3             |            | 3                          | 3          |                 | 2                |                  |
+| INT32                | null (INT32)     |         | 3     | 2      | 2         | 2           | 1             |            | 2                          | 2          |                 | 2                |                  |
+| INT32                | INT_8            |         | 2     | 2      | 1         | 2           | 2             |            | 2                          | 2          |                 | 2                |                  |
+| INT32                | INT_16           |         | 2     | 2      | 2         | 1           | 2             |            | 2                          | 2          |                 | 2                |                  |
+| INT32                | INT_32           |         | 3     | 2      | 2         | 2           | 1             |            | 2                          | 2          |                 | 2                |                  |
+| INT32                | DATE             |         |       |        |           |             |               | 1          |                            |            | 2               | 2                |                  |
+| INT32                | DECIMAL          |         | 2,3   | 2      | 2,3       | 2,3         | 2,3           |            | 1,2,3                      | 2,3        |                 | 2                |                  |
+| INT64                | null (INT64)     |         | 3     | 3      | 2         | 2           | 2             |            | 2                          | 1          |                 | 2                |                  |
+| INT64                | INT_64           |         | 3     | 3      | 2         | 2           | 2             |            | 2                          | 1          |                 | 2                |                  |
+| INT64                | DECIMAL          |         | 2,3   | 2,3    | 2,3       | 2,3         | 2,3           |            | 1,2,3                      | 2,3        |                 | 2                |                  |
+| INT64                | TIMESTAMP_MILLIS |         |       |        |           |             |               | 3          |                            |            | 1               | 2                |                  |
+| INT64                | TIMESTAMP_MICROS |         |       |        |           |             |               | 3          |                            |            | 1               | 2                |                  |
+| INT96                | /                |         |       |        |           |             |               | 3          |                            |            | 1               | 2                |                  |
+| BINARY               | null             |         |       |        |           |             |               |            |                            |            |                 |                  | 1                |
+| BINARY               | UTF8             | 2       | 3     | 3      | 2         | 2           | 2             | 2          | 3                          | 2          | 2               | 1                |                  |
+| BINARY               | ENUM             | 2       | 3     | 3      | 2         | 2           | 2             | 2          | 3                          | 2          | 2               | 1                |                  |
+| BINARY               | JSON             |         |       |        |           |             |               |            |                            |            |                 | 1                |                  |
+| BINARY               | BSON             |         |       |        |           |             |               |            |                            |            |                 |                  | 1                |
+| BINARY               | DECIMAL          |         | 2,3   | 2,3    | 2,3       | 2,3         | 2,3           |            | 1,2,3                      | 2,3        |                 | 2                |                  |
+| FIXED_LEN_BYTE_ARRAY | DECIMAL          |         | 2,3   | 2,3    | 2,3       | 2,3         | 2,3           |            | 1,2,3                      | 2,3        |                 | 2                |                  |
+| /                    | UINT_8           |         |       |        |           |             |               |            |                            |            |                 |                  |                  |
+| /                    | UINT_64          |         |       |        |           |             |               |            |                            |            |                 |                  |                  |
+| /                    | UINT_32          |         |       |        |           |             |               |            |                            |            |                 |                  |                  |
+| /                    | UINT_16          |         |       |        |           |             |               |            |                            |            |                 |                  |                  |
+| /                    | TIME_MILLIS      |         |       |        |           |             |               |            |                            |            |                 |                  |                  |
+| /                    | TIME_MICROS      |         |       |        |           |             |               |            |                            |            |                 |                  |                  |
+| /                    | INTERVAL         |         |       |        |           |             |               |            |                            |            |                 |                  |                  |
+
+The type mapping marked 1, 2 and 3 in the table can be converted.
+
+1: The type corresponds strictly
+
+2: The type does not correspond, but it can be converted without side effects
+
+3: The type does not correspond, the data precision may be lost during the conversion process
+
+For the decimal type, spark needs to match the label according to its scale and precision attributes.
+
+Users can use the data source option `conversionMode` or global SQL option `spark.sql.parquet.conversionMode` to set the data conversion mode. There are three modes available.
+
+`MATCH`: Only convert label 1 in the table.
+
+`NO_SIDE_EFFECTS`: Convert labels 1 and 2 in the table.
+
+`LOSS_PRECISION`: Convert all labels 1, 2 and 3 in the table.
+
+In some type conversions, such as INT64 -> Integer, data overflow may occur. At this time, the data converter will explicitly throw an exception, instead of implicitly assigning the wrong data to null.
+
+<div class="codetabs">
+
+<div data-lang="scala"  markdown="1">
+{% include_example conversion_mode scala/org/apache/spark/examples/sql/SQLDataSourceExample.scala %}
 </div>
 
 </div>
@@ -329,4 +392,17 @@ Configuration of Parquet can be done using the `setConf` method on `SparkSession
   </td>
   <td>1.6.0</td>
 </tr>
+<tr>
+  <td><code>spark.sql.parquet.conversionMode</code></td>
+  <td><code>NO_SIDE_EFFECTS</code></td>
+  <td>
+    Set the mode to convert the data in the parquet file to the internal spark data, including 
+    <code>MATCH</code> (only allow all schema type matching conversions), 
+    <code>NO_SIDE_EFFECTS</code> (allow schema mismatch conversions, but do not include 
+    conversions that may lose precision), <code>LOSS_PRECISION</code> (allow schema 
+    mismatched conversions, include conversions that may lose precision).
+  </td>
+  <td>3.1.0</td>
+</tr>
 </table>
+
