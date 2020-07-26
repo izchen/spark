@@ -2672,6 +2672,22 @@ object SQLConf {
       .checkValue(_ >= 0, "The value must be non-negative.")
       .createWithDefault(8)
 
+  object ParquetRowConversionMode extends Enumeration {
+    val MATCH, NO_SIDE_EFFECTS, LOSS_PRECISION = Value
+  }
+
+  val PARQUET_ROW_CONVERSION_MODE = buildConf("spark.sql.parquet.conversionMode")
+    .doc("Set the mode to convert the data in the parquet file to the internal spark " +
+      "data, including MATCH (only allow all schema type matching conversions), " +
+      "NO_SIDE_EFFECTS (allow schema mismatch conversions, but do not include " +
+      "conversions that may lose precision), LOSS_PRECISION (allow schema mismatched " +
+      "conversions, include conversions that may lose precision).")
+    .version("3.1.0")
+    .stringConf
+    .transform(_.toUpperCase(Locale.ROOT))
+    .checkValues(ParquetRowConversionMode.values.map(_.toString))
+    .createWithDefault(ParquetRowConversionMode.NO_SIDE_EFFECTS.toString)
+
   /**
    * Holds information about keys that have been deprecated.
    *
@@ -3276,6 +3292,9 @@ class SQLConf extends Serializable with Logging {
 
   def coalesceBucketsInJoinMaxBucketRatio: Int =
     getConf(SQLConf.COALESCE_BUCKETS_IN_JOIN_MAX_BUCKET_RATIO)
+
+  def parquetRowConversionMode: ParquetRowConversionMode.Value =
+    ParquetRowConversionMode.withName(getConf(PARQUET_ROW_CONVERSION_MODE))
 
   /** ********************** SQLConf functionality methods ************ */
 
