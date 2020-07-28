@@ -21,12 +21,15 @@ import scala.collection.JavaConverters._
 
 import org.apache.hadoop.conf.Configuration
 import org.apache.parquet.schema._
+import org.apache.parquet.schema.OriginalType
 import org.apache.parquet.schema.OriginalType._
+import org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName
 import org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName._
 import org.apache.parquet.schema.Type.Repetition._
 
 import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.internal.SQLConf.ParquetRowConversionMode
 import org.apache.spark.sql.types._
 
 
@@ -556,6 +559,250 @@ class SparkToParquetSchemaConverter(
       case _ =>
         throw new AnalysisException(s"Unsupported data type ${field.dataType.catalogString}")
     }
+  }
+}
+
+/**
+ * This checker class is used to check the matching relationship between
+ * Spark SQL[[StructType]] and Parquet[[MessageType]].
+ *
+ * @see docs/sql-data-sources-parquet.md#conversion-mode
+ *
+ * @param conversionMode Set the mode [[ParquetRowConversionMode]] to convert the data in the
+ *                       parquet file to the internal spark data.
+ * @param assumeBinaryIsString Whether unannotated BINARY fields should be assumed to be Spark SQL
+ *        [[StringType]] fields.
+ * @param assumeInt96IsTimestamp Whether unannotated INT96 fields should be assumed to be Spark SQL
+ *        [[TimestampType]] fields.
+ */
+class SparkParquetSchemaChecker(
+    conversionMode: ParquetRowConversionMode.Value,
+    assumeBinaryIsString: Boolean,
+    assumeInt96IsTimestamp: Boolean) {
+
+  val lossPrecisionModeEnable = conversionMode == ParquetRowConversionMode.LOSS_PRECISION
+  val noSideEffectsModeEnable =
+    conversionMode == ParquetRowConversionMode.NO_SIDE_EFFECTS || lossPrecisionModeEnable
+
+  def checkSchema(sparkSchema: StructType, parquetSchema: MessageType): Unit = {
+    val parquetGroup = parquetSchema.asGroupType()
+    val errorFieldNames = sparkSchema.fields.flatMap(checkField(_, parquetGroup))
+    if (errorFieldNames.size > 0) {
+
+    }
+    // TODO
+  }
+
+  def checkField(sparkField: StructField, parquetParentGroup: GroupType): Seq[String] = {
+    val fieldName = sparkField.name
+    if (!parquetParentGroup.containsField(fieldName)) {
+      return sparkField.nullable match {
+        case true => Seq.empty
+        case false => Seq(fieldName)
+      }
+    }
+    if (sparkField.dataType.isInstanceOf[UserDefinedType[_]]) {
+      val dataType = sparkField.dataType.asInstanceOf[UserDefinedType[_]].sqlType
+      return checkField(sparkField.copy(dataType = dataType), parquetParentGroup)
+    }
+
+    val parquetType = parquetParentGroup.getType(fieldName)
+    if (parquetType.isPrimitive) {
+      val primitiveType = parquetType.asPrimitiveType()
+      val typeName = primitiveType.getPrimitiveTypeName
+      val originalType = primitiveType.getOriginalType
+      val canConvert = sparkField.dataType match {
+        case BooleanType => canConvertToBoolean(typeName, originalType)
+        case FloatType => canConvertToFloat(typeName, originalType)
+        case DoubleType => canConvertToDouble(typeName, originalType)
+        case i: ByteType => canConvertToIntegral(i, typeName, originalType, primitiveType)
+        case i: ShortType => canConvertToIntegral(i, typeName, originalType, primitiveType)
+        case i: IntegerType => canConvertToIntegral(i, typeName, originalType, primitiveType)
+        case i: LongType => canConvertToIntegral(i, typeName, originalType, primitiveType)
+        case StringType => canConvertToString(typeName, originalType)
+        case DateType => canConvertToDate(typeName, originalType)
+        case TimestampType => canConvertToTimestamp(typeName, originalType)
+        case BinaryType => canConvertToBinary(typeName, originalType)
+        case i: DecimalType => canConvertToDecimal(i, typeName, originalType, primitiveType)
+        case ArrayType(elementType, _) => false // TODO
+        case _ => false
+      }
+      canConvert match {
+        case true => Seq.empty
+        case false => Seq(fieldName)
+      }
+    } else {
+      val parquetGroupType = parquetType.asGroupType()
+      sparkField.dataType match {
+        case ArrayType(elementType, _) =>
+        case MapType(keyType, valueType, _) =>
+        case StructType(fields) =>
+          fields.flatMap(checkField(_, parquetGroupType)).map(fieldName + _)
+        case _ => Seq(fieldName)
+      }
+      Seq.empty
+    }
+  }
+
+  private def isBoolean(name: PrimitiveTypeName): Boolean = {
+    name == BOOLEAN
+  }
+
+  private def isFloat(name: PrimitiveTypeName): Boolean = {
+    name == FLOAT || name == DOUBLE
+  }
+
+  private def isInteger(name: PrimitiveTypeName, original: OriginalType): Boolean = {
+    name == INT32 && {
+      original match {
+        case null | INT_8 | INT_16 | INT32 => true
+        case  _ => false
+      }
+    }
+  }
+
+  private def isLong(name: PrimitiveTypeName, original: OriginalType): Boolean = {
+    name == INT64 && {
+      original match {
+        case null | INT_64 => true
+        case  _ => false
+      }
+    }
+  }
+
+  private def isDecimal(name: PrimitiveTypeName, original: OriginalType): Boolean = {
+    original == DECIMAL && {
+      name match {
+        case INT32 | INT64 | BINARY | FIXED_LEN_BYTE_ARRAY => true
+        case _ => false
+      }
+    }
+  }
+
+  private def decimalIsIntegral(ptype: PrimitiveType): Boolean = {
+    ptype.getDecimalMetadata.getScale == 0
+  }
+
+  private def decimalToDecimalIsMathch(spark: DecimalType, parquet: PrimitiveType): Boolean = {
+    spark.precision == parquet.getDecimalMetadata.getPrecision &&
+      spark.scale == parquet.getDecimalMetadata.getScale
+  }
+
+  private def decimalToDecimalIsNoSideEffects(spark: DecimalType,
+                                              parquet: PrimitiveType): Boolean = {
+    spark.scale >= parquet.getDecimalMetadata.getScale
+  }
+
+  private def isTimeStamp(name: PrimitiveTypeName, original: OriginalType): Boolean = {
+    name match {
+      case INT64 =>
+        original match {
+          case TIMESTAMP_MICROS | TIMESTAMP_MILLIS => true
+          case _ => false
+        }
+      case INT96 if assumeInt96IsTimestamp => true
+      case _ => false
+    }
+  }
+
+  private def isDate(name: PrimitiveTypeName, original: OriginalType): Boolean = {
+    name == INT32 && original == DATE
+  }
+
+  private def isString(name: PrimitiveTypeName, original: OriginalType): Boolean = {
+    name == BINARY && {
+      original match {
+        case UTF8 | ENUM => true
+        case null if assumeBinaryIsString => true
+        case _ => false
+      }
+    }
+  }
+
+  private def canConvertToBoolean(name: PrimitiveTypeName, original: OriginalType): Boolean = {
+    def matchMode() = isBoolean(name)
+    def noSideEffectsMode() = name == isString(name, original)
+    matchMode() || (noSideEffectsModeEnable && noSideEffectsMode())
+  }
+
+  private def canConvertToFloat(name: PrimitiveTypeName, original: OriginalType): Boolean = {
+    def matchMode() = name == FLOAT
+    def noSideEffectsMode() = name == INT32 && (original == INT_8 || original == INT_16)
+    def lossPrecisionMode() = name == DOUBLE || isInteger(name, original) ||
+      isLong(name, original) || isDecimal(name, original) || isString(name, original)
+    matchMode() ||(noSideEffectsModeEnable && noSideEffectsMode()) ||
+      (lossPrecisionModeEnable && lossPrecisionMode())
+  }
+
+  private def canConvertToDouble(name: PrimitiveTypeName, original: OriginalType): Boolean = {
+    def matchMode() = name == DOUBLE
+    def noSideEffectsMode() = name == FLOAT || isInteger(name, original)
+    def lossPrecisionMode() = isLong(name, original) ||
+      isDecimal(name, original) || isString(name, original)
+    matchMode() ||(noSideEffectsModeEnable && noSideEffectsMode()) ||
+      (lossPrecisionModeEnable && lossPrecisionMode())
+  }
+
+  private def canConvertToIntegral(sparkType: IntegralType, name: PrimitiveTypeName,
+                               original: OriginalType, ptype: PrimitiveType): Boolean = {
+    def matchMode() = {
+      sparkType match {
+        case ByteType => name == INT32 && original == INT_8
+        case ShortType => name == INT32 && original == INT_16
+        case IntegerType => name == INT32 && (original == null || original == INT_32)
+        case LongType => name == isLong(name, original)
+      }
+    }
+    def noSideEffectsMode() = isInteger(name, original) || isLong(name, original) ||
+      (isDecimal(name, original) && decimalIsIntegral(ptype)) || isString(name, original)
+    def lossPrecisionMode() = isFloat(name) || isDecimal(name, original)
+    matchMode() ||(noSideEffectsModeEnable && noSideEffectsMode()) ||
+      (lossPrecisionModeEnable && lossPrecisionMode())
+  }
+
+  private def canConvertToDate(name: PrimitiveTypeName, original: OriginalType): Boolean = {
+    def matchMode() = name == isDate(name, original)
+    def noSideEffectsMode() = isString(name, original)
+    def lossPrecisionMode() = isTimeStamp(name, original)
+    matchMode() ||(noSideEffectsModeEnable && noSideEffectsMode()) ||
+      (lossPrecisionModeEnable && lossPrecisionMode())
+  }
+
+  private def canConvertToDecimal(sparkType: DecimalType, name: PrimitiveTypeName,
+                                  original: OriginalType, ptype: PrimitiveType): Boolean = {
+    val parquetTypeisDecimal = isDecimal(name, original)
+    def matchMode() = parquetTypeisDecimal && decimalToDecimalIsMathch(sparkType, ptype)
+    def noSideEffectsMode() = isInteger(name, original) || isLong(name, original) ||
+      (parquetTypeisDecimal && decimalToDecimalIsNoSideEffects(sparkType, ptype))
+    def lossPrecisionMode() = parquetTypeisDecimal || isString(name, original)
+    matchMode() ||(noSideEffectsModeEnable && noSideEffectsMode()) ||
+      (lossPrecisionModeEnable && lossPrecisionMode())
+  }
+
+  private def canConvertToTimestamp(name: PrimitiveTypeName, original: OriginalType): Boolean = {
+    def matchMode() = isTimeStamp(name, original)
+    def noSideEffectsMode() = isDate(name, original) || isString(name, original)
+    matchMode() ||(noSideEffectsModeEnable && noSideEffectsMode())
+  }
+
+  private def canConvertToString(name: PrimitiveTypeName, original: OriginalType): Boolean = {
+    def matchMode() = name == isString(name, original) || (name == BINARY && original == JSON)
+    def noSideEffectsMode() = isBoolean(name) || isFloat(name) || isInteger(name, original) ||
+      isDate(name, original) || isDecimal(name, original) || isLong(name, original) ||
+      isTimeStamp(name, original)
+    matchMode() ||(noSideEffectsModeEnable && noSideEffectsMode())
+  }
+
+  private def canConvertToBinary(name: PrimitiveTypeName, original: OriginalType): Boolean = {
+    def matchMode() =
+      name == BINARY && {
+      original match {
+        case BSON => true
+        case null => !assumeBinaryIsString
+        case _ => false
+      }
+    }
+    matchMode()
   }
 }
 
