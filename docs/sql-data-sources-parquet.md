@@ -172,7 +172,8 @@ turned it off by default starting from 1.5.0. You may enable it by
 
 ### Conversion Mode
 
-When spark reads a parquet file, it converts the original data type in the parquet file to the internal data type of spark. The conversion relationship is as follows:
+When spark reads a parquet file, it converts the original data type in the parquet file to the internal 
+data type of spark. The conversion relationship is as follows:
 
 | PrimitiveTypeName    | OriginalType        | Boolean | Float | Double | Byte int8 | Short int16 | Integer int32 | Date int32 | Decimal long or bigDecimal | Long int64 | Timestamp int64 | String byteArray | Binary byteArray |
 | -------------------- | ------------------- | ------- | ----- | ------ | --------- | ----------- | ------------- | ---------- | -------------------------- | ---------- | --------------- | ---------------- | ---------------- |
@@ -218,15 +219,21 @@ The type mapping marked 1, 2 and 3 in the table can be converted.
 
 For the decimal type, spark needs to match the label according to its scale and precision attributes.
 
-Users can use the data source option `conversionMode` or global SQL option `spark.sql.parquet.conversionMode` to set the data conversion mode. There are three modes available.
+Users can use the data source option `conversionMode` or global SQL option `spark.sql.parquet.conversionMode` 
+to set the data conversion mode. There are three modes available.
 
-`MATCH`: Only convert label 1 in the table.
+`MATCH`(default): Only convert label 1 in the table.
 
 `NO_SIDE_EFFECTS`: Convert labels 1 and 2 in the table.
 
 `LOSS_PRECISION`: Convert all labels 1, 2 and 3 in the table.
 
-In some type conversions, such as INT64 -> Integer, data overflow may occur. At this time, the data converter will explicitly throw an exception, instead of implicitly assigning the wrong data to null.
+In some type conversions, such as INT64 -> Integer, data overflow may occur. At this time, the data 
+converter will explicitly throw an exception, instead of implicitly assigning the wrong data to null.
+
+*It is recommended that users try to use the spark schema that strictly matches the file, which will have 
+better performance. Non-strict matching column reads will generate additional conversions and checks, and 
+prevent the JVM from vectorizing the corresponding column reads.*
 
 <div class="codetabs">
 
@@ -397,7 +404,7 @@ Configuration of Parquet can be done using the `setConf` method on `SparkSession
 </tr>
 <tr>
   <td><code>spark.sql.parquet.conversionMode</code></td>
-  <td><code>NO_SIDE_EFFECTS</code></td>
+  <td><code>MATCH</code></td>
   <td>
     Set the mode to convert the data in the parquet file to the internal spark data, including 
     <code>MATCH</code> (only allow all schema type matching conversions), 
