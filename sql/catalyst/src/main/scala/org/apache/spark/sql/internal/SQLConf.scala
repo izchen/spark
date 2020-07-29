@@ -2710,12 +2710,13 @@ object SQLConf {
       "data, including MATCH (only allow all schema type matching conversions), " +
       "NO_SIDE_EFFECTS (allow schema mismatch conversions, but do not include " +
       "conversions that may lose precision), LOSS_PRECISION (allow schema mismatched " +
-      "conversions, include conversions that may lose precision).")
+      "conversions, include conversions that may lose precision). Matching columns " +
+      "have better performance when read.")
     .version("3.1.0")
     .stringConf
     .transform(_.toUpperCase(Locale.ROOT))
     .checkValues(ParquetRowConversionMode.values.map(_.toString))
-    .createWithDefault(ParquetRowConversionMode.NO_SIDE_EFFECTS.toString)
+    .createWithDefault(ParquetRowConversionMode.MATCH.toString)
 
   /**
    * Holds information about keys that have been deprecated.
