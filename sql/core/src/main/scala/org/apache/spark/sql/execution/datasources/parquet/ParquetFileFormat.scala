@@ -253,6 +253,8 @@ class ParquetFileFormat
     val pushDownInFilterThreshold = sqlConf.parquetFilterPushDownInFilterThreshold
     val isCaseSensitive = sqlConf.caseSensitiveAnalysis
     val parquetOptions = new ParquetOptions(options, sparkSession.sessionState.conf)
+    val assumeBinaryIsString = sqlConf.isParquetBinaryAsString
+    val assumeInt96IsTimestamp = sqlConf.isParquetINT96AsTimestamp
     val conversionMode = parquetOptions.conversionMode
 
     (file: PartitionedFile) => {
@@ -270,11 +272,16 @@ class ParquetFileFormat
 
       val sharedConf = broadcastedHadoopConf.value.value
 
-      lazy val footerFileMetaData =
+      val footerFileMetaData =
         ParquetFileReader.readFooter(sharedConf, filePath, SKIP_ROW_GROUPS).getFileMetaData
+      val parquetSchema = footerFileMetaData.getSchema
+      // Check whether the parquet file fields can be converted with the spark schema
+      // in the current conversion mode.
+      val schemaChecker =
+        new SparkParquetSchemaChecker(conversionMode, assumeBinaryIsString, assumeInt96IsTimestamp)
+      schemaChecker.checkSchema(requiredSchema, parquetSchema)
       // Try to push down filters when filter push-down is enabled.
       val pushed = if (enableParquetFilterPushDown) {
-        val parquetSchema = footerFileMetaData.getSchema
         val parquetFilters = new ParquetFilters(parquetSchema, pushDownDate, pushDownTimestamp,
           pushDownDecimal, pushDownStringStartWith, pushDownInFilterThreshold, isCaseSensitive)
         filters
