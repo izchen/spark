@@ -24,6 +24,7 @@ import java.time.{ZoneId, ZoneOffset}
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
+import scala.reflect.ClassTag
 
 import org.apache.parquet.column.Dictionary
 import org.apache.parquet.io.api.{Binary, Converter, GroupConverter, PrimitiveConverter}
@@ -249,20 +250,23 @@ private[parquet] class ParquetRowConverter(
       case FloatType =>
         new ToSparkFloatConverter(parquetType, updater)
 
-      case IntegerType | LongType | DoubleType | BinaryType =>
-        new ParquetPrimitiveConverter(updater)
+      case DoubleType =>
+        new ToSparkDoubleConverter(parquetType, updater)
 
       case ByteType =>
-        new ParquetPrimitiveConverter(updater) {
-          override def addInt(value: Int): Unit =
-            updater.setByte(value.asInstanceOf[ByteType#InternalType])
-        }
+        new ToSparkByteConverter(parquetType, updater)
 
       case ShortType =>
-        new ParquetPrimitiveConverter(updater) {
-          override def addInt(value: Int): Unit =
-            updater.setShort(value.asInstanceOf[ShortType#InternalType])
-        }
+        new ToSparkShortConverter(parquetType, updater)
+
+      case IntegerType =>
+        new ToSparkIntegerConverter(parquetType, updater)
+
+      case LongType =>
+        new ToSparkLongConverter(parquetType, updater)
+
+      case BinaryType =>
+        new ParquetPrimitiveConverter(updater)
 
       // For INT32 backed decimals
       case t: DecimalType if parquetType.asPrimitiveType().getPrimitiveTypeName == INT32 =>
@@ -398,7 +402,7 @@ private[parquet] class ParquetRowConverter(
    * 5.BINARY(UTF8 DECIMAL)
    * 6.FIXED_LEN_BYTE_ARRAY(DECIMAL)
    */
-  private abstract class ToSparkNumericConverter[T](
+  private abstract class ToSparkNumericConverter[T: ClassTag](
       parquetType: Type, updater: ParentContainerUpdater)
     extends ParquetPrimitiveConverter(updater) {
 
