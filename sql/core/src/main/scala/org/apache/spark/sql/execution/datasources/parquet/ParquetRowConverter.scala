@@ -444,6 +444,16 @@ private[parquet] class ParquetRowConverter(
     protected def doubleToType(double: Double): T
     protected def longToType(long: Long): T
 
+    protected def checkedLongToType(long: Long): T = {
+      val value = long.asInstanceOf[T]
+      if (long == value) {
+        value
+      } else {
+        throw new ArithmeticException(
+          s"Casting Long($long) to ${value.getClass.toString} causes overflow")
+      }
+    }
+
     override def addValueFromDictionary(dictionaryId: Int): Unit = {
       add(expandedDictionary(dictionaryId))
     }
@@ -661,13 +671,130 @@ private[parquet] class ParquetRowConverter(
     }
 
     override protected def longToType(long: Long): Byte = {
-      val byte = long.toByte
-      if (long == byte) {
-        byte
+      checkedLongToType(long)
+    }
+  }
+
+  /**
+   * Converter to spark [[ShortType]].
+   * Possible parquet primitive types:
+   * 1.FLOAT - may overflow
+   * 2.DOUBLE - may overflow
+   * 3.INT32(INT_8 INT_16)
+   *   INT32(INT_32 DECIMAL) - may overflow
+   * 4.INT64(INT_64 DECIMAL) - may overflow
+   * 5.BINARY(UTF8 DECIMAL) - may overflow
+   * 6.FIXED_LEN_BYTE_ARRAY(DECIMAL) - may overflow
+   */
+  private final class ToSparkShortConverter(parquetType: Type, updater: ParentContainerUpdater)
+    extends ToSparkNumericConverter[Short](parquetType, updater) {
+    private val upperBound = Short.MaxValue
+    private val lowerBound = Short.MinValue
+
+    override protected def add(value: Short): Unit = {
+      updater.setShort(value)
+    }
+
+    override protected def decimalToType(decimal: Decimal): Short = {
+      decimal.roundToShort()
+    }
+
+    override protected def utf8BinaryToType(binary: Binary): Short = {
+      val utf8 = ParquetRowConverter.utf8StringFromBinary(binary)
+      utf8.toShortExact
+    }
+
+    override protected def doubleToType(double: Double): Short = {
+      ParquetRowConverter.checkToIntegralOverflow(double, upperBound, lowerBound)
+      double.toShort
+    }
+
+    override protected def longToType(long: Long): Short = {
+      checkedLongToType(long)
+    }
+  }
+
+  /**
+   * Converter to spark [[IntegerType]].
+   * Possible parquet primitive types:
+   * 1.FLOAT
+   * 2.DOUBLE
+   * 3.INT32(INT_8 INT_16 INT_32 DECIMAL)
+   * 4.INT64(INT_64 DECIMAL) - may overflow
+   * 5.BINARY(UTF8 DECIMAL) - may overflow
+   * 6.FIXED_LEN_BYTE_ARRAY(DECIMAL) - may overflow
+   */
+  private final class ToSparkIntegerConverter(parquetType: Type, updater: ParentContainerUpdater)
+    extends ToSparkNumericConverter[Int](parquetType, updater) {
+    private val upperBound = Int.MaxValue
+    private val lowerBound = Int.MinValue
+
+    override protected def add(value: Int): Unit = {
+      updater.setInt(value)
+    }
+
+    override def addInt(value: Int): Unit = {
+      if (isDecimal) {
+        val decimal = ParquetRowConverter.decimalFromLong(value, parquetDecimal)
+        add(decimalToType(decimal))
       } else {
-        throw new ArithmeticException(s"Casting Long($long) to Byte causes overflow")
+        add(value)
       }
     }
+
+    override protected def decimalToType(decimal: Decimal): Int = {
+      decimal.roundToInt()
+    }
+
+    override protected def utf8BinaryToType(binary: Binary): Int = {
+      val utf8 = ParquetRowConverter.utf8StringFromBinary(binary)
+      utf8.toIntExact
+    }
+
+    override protected def doubleToType(double: Double): Int = {
+      ParquetRowConverter.checkToIntegralOverflow(double, upperBound, lowerBound)
+      double.toInt
+    }
+
+    override protected def longToType(long: Long): Int = {
+      checkedLongToType(long)
+    }
+  }
+
+  /**
+   * Converter to spark [[LongType]].
+   * Possible parquet primitive types:
+   * 1.FLOAT
+   * 2.DOUBLE
+   * 3.INT32(INT_8 INT_16 INT_32 DECIMAL)
+   * 4.INT64(INT_64 DECIMAL) - may overflow
+   * 5.BINARY(UTF8 DECIMAL) - may overflow
+   * 6.FIXED_LEN_BYTE_ARRAY(DECIMAL) - may overflow
+   */
+  private final class ToSparkLongConverter(parquetType: Type, updater: ParentContainerUpdater)
+    extends ToSparkNumericConverter[Long](parquetType, updater) {
+    private val upperBound = Long.MaxValue
+    private val lowerBound = Long.MinValue
+
+    override protected def add(value: Long): Unit = {
+      updater.setLong(value)
+    }
+
+    override protected def decimalToType(decimal: Decimal): Long = {
+      decimal.roundToLong()
+    }
+
+    override protected def utf8BinaryToType(binary: Binary): Long = {
+      val utf8 = ParquetRowConverter.utf8StringFromBinary(binary)
+      utf8.toLongExact
+    }
+
+    override protected def doubleToType(double: Double): Long = {
+      ParquetRowConverter.checkToIntegralOverflow(double, upperBound, lowerBound)
+      double.toLong
+    }
+
+    override protected def longToType(long: Long): Long = long
   }
 
   /**
