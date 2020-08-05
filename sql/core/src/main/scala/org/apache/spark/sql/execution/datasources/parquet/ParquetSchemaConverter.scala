@@ -486,6 +486,13 @@ class SparkParquetSchemaChecker(
     assumeBinaryIsString: Boolean,
     assumeInt96IsTimestamp: Boolean) {
 
+  def this(conf: Configuration) = this(
+    conversionMode = ParquetRowConversionMode.withName(
+      conf.get(SQLConf.PARQUET_ROW_CONVERSION_MODE.key)),
+    assumeBinaryIsString = conf.get(SQLConf.PARQUET_BINARY_AS_STRING.key).toBoolean,
+    assumeInt96IsTimestamp = conf.get(SQLConf.PARQUET_INT96_AS_TIMESTAMP.key).toBoolean
+  )
+
   val lossPrecisionModeEnable = conversionMode == ParquetRowConversionMode.LOSS_PRECISION
   val noSideEffectsModeEnable =
     conversionMode == ParquetRowConversionMode.NO_SIDE_EFFECTS || lossPrecisionModeEnable
