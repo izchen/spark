@@ -131,9 +131,10 @@ private[parquet] class ParquetRowConverter(
     schemaConverter: ParquetToSparkSchemaConverter,
     parquetType: GroupType,
     catalystType: StructType,
-    convertTz: Option[ZoneId],
+    convertTz: ZoneId,
     datetimeRebaseMode: LegacyBehaviorPolicy.Value,
-    updater: ParentContainerUpdater)
+    updater: ParentContainerUpdater,
+    convertInt96Timestamp: Boolean)
   extends ParquetGroupConverter(updater) with Logging {
 
   assert(
@@ -303,8 +304,11 @@ private[parquet] class ParquetRowConverter(
             val timeOfDayNanos = buf.getLong
             val julianDay = buf.getInt
             val rawTime = DateTimeUtils.fromJulianDay(julianDay, timeOfDayNanos)
-            val adjTime = convertTz.map(DateTimeUtils.convertTz(rawTime, _, ZoneOffset.UTC))
-              .getOrElse(rawTime)
+            val adjTime = if (convertInt96Timestamp) {
+              DateTimeUtils.convertTz(rawTime, convertTz, ZoneOffset.UTC)
+            } else {
+              rawTime
+            }
             updater.setLong(adjTime)
           }
         }
@@ -365,7 +369,8 @@ private[parquet] class ParquetRowConverter(
           t,
           convertTz,
           datetimeRebaseMode,
-          wrappedUpdater)
+          wrappedUpdater,
+          convertInt96Timestamp)
 
       case t =>
         throw new RuntimeException(
