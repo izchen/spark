@@ -122,10 +122,11 @@ private[parquet] class ParquetPrimitiveConverter(val updater: ParentContainerUpd
  * @param parquetType Parquet schema of Parquet records
  * @param catalystType Spark SQL schema that corresponds to the Parquet record type. User-defined
  *        types should have been expanded.
- * @param convertTz the optional time zone to convert to int96 data
+ * @param convertTz Timezone ID of the session
  * @param datetimeRebaseMode the mode of rebasing date/timestamp from Julian to Proleptic Gregorian
  *                           calendar
  * @param updater An updater which propagates converted field values to the parent container
+ * @param convertInt96Timestamp Whether to use session timezone to convert to int96 data
  */
 private[parquet] class ParquetRowConverter(
     schemaConverter: ParquetToSparkSchemaConverter,

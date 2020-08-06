@@ -32,9 +32,10 @@ import org.apache.spark.sql.types.StructType
  * @param parquetSchema Parquet schema of the records to be read
  * @param catalystSchema Catalyst schema of the rows to be constructed
  * @param schemaConverter A Parquet-Catalyst schema converter that helps initializing row converters
- * @param convertTz the optional time zone to convert to int96 data
+ * @param convertTz  Timezone ID of the session
  * @param datetimeRebaseMode the mode of rebasing date/timestamp from Julian to Proleptic Gregorian
  *                           calendar
+ * @param convertInt96Timestamp Whether to use session timezone to convert to int96 data
  */
 private[parquet] class ParquetRecordMaterializer(
     parquetSchema: MessageType,

@@ -100,8 +100,10 @@ public class VectorizedColumnReader {
   private final PageReader pageReader;
   private final ColumnDescriptor descriptor;
   private final OriginalType originalType;
-  // The timezone conversion to apply to int96 timestamps. Null if no conversion.
+  // Timezone ID of the session.
   private final ZoneId convertTz;
+  // Whether to use session timezone to convert to int96 data.
+  private final boolean convertInt96Timestamp;
   private static final ZoneId UTC = ZoneOffset.UTC;
   private final String datetimeRebaseMode;
 
@@ -110,10 +112,12 @@ public class VectorizedColumnReader {
       OriginalType originalType,
       PageReader pageReader,
       ZoneId convertTz,
-      String datetimeRebaseMode) throws IOException {
+      String datetimeRebaseMode,
+      boolean convertInt96Timestamp) throws IOException {
     this.descriptor = descriptor;
     this.pageReader = pageReader;
     this.convertTz = convertTz;
+    this.convertInt96Timestamp = convertInt96Timestamp;
     this.originalType = originalType;
     this.maxDefLevel = descriptor.getMaxDefinitionLevel();
 
@@ -283,7 +287,7 @@ public class VectorizedColumnReader {
   }
 
   private boolean shouldConvertTimestamps() {
-    return convertTz != null && !convertTz.equals(UTC);
+    return convertInt96Timestamp && !convertTz.equals(UTC);
   }
 
   /**
