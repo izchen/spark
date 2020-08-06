@@ -1070,6 +1070,9 @@ private[parquet] class ParquetRowConverter(
           val decimal = ParquetRowConverter.decimalFromLong(value, parquetDecimal)
           UTF8String.fromString(decimal.toString)
         }
+        case _ => value =>
+          throw new RuntimeException(
+            s"Unsupported int value from parquet type: ${parquetType.toString}")
       }
     }
 
@@ -1095,6 +1098,9 @@ private[parquet] class ParquetRowConverter(
           val micros = timestampRebaseFunc(value)
           UTF8String.fromString(timestampFormatter.format(micros))
         }
+        case _ => value =>
+          throw new RuntimeException(s"" +
+            s"Unsupported long value from parquet type: ${parquetType.toString}")
       }
     }
 
@@ -1124,6 +1130,9 @@ private[parquet] class ParquetRowConverter(
               ParquetRowConverter.utf8StringFromBinary(value)
             }
           }
+        case _ => value =>
+          throw new RuntimeException(s"" +
+            s"Unsupported binary value from parquet type: ${parquetType.toString}")
       }
     }
   }
